@@ -6,26 +6,49 @@ const Docxtemplater = require('docxtemplater');
 const ImageModule = require('docxtemplater-image-module-free');
 const axios = require('axios');
 const { v4: uuidv4 } = require('uuid');
-const libre = require('libreoffice-convert');
-const util = require('util');
-
-// Promisify the convert function
-libre.convertAsync = util.promisify(libre.convert);
+const mammoth = require('mammoth');
+const puppeteer = require('puppeteer');
 
 const app = express();
-// Use PUBLIC_HOSTNAME for external links, default to localhost
 const hostname = process.env.PUBLIC_HOSTNAME || 'localhost';
 const port = process.env.PORT || 3000;
 
-// Create necessary directories if they don't exist
 const reportsDir = path.join(__dirname, 'generated_reports');
 if (!fs.existsSync(reportsDir)) {
     fs.mkdirSync(reportsDir, { recursive: true });
 }
 
-// Middleware to parse JSON bodies
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+
+// --- Custom Parser for Plumsail Syntax ---
+const plumsailParser = (tag) => {
+    // This parser handles syntax like {{tag:format(..)}}, etc.
+    // by stripping it down to just the tag.
+    // A more robust implementation could actually parse and apply the formatters.
+    if (tag.startsWith('{{') && tag.endsWith('}}')) {
+        let strippedTag = tag.substring(2, tag.length - 2).trim();
+        // Remove formatters like :format(), :picture(), etc.
+        const colonIndex = strippedTag.indexOf(':');
+        if (colonIndex !== -1) {
+            strippedTag = strippedTag.substring(0, colonIndex);
+        }
+        // Handle image tags like {%image}
+        if (strippedTag.startsWith('%')) {
+             return {
+                get: (scope) => scope[strippedTag.substring(1)],
+                type: "placeholder",
+                module: "image",
+                value: strippedTag.substring(1),
+            }
+        }
+        return {
+            get: (scope) => scope[strippedTag],
+        };
+    }
+    // Default behavior for other tags
+    return null;
+};
 
 // --- Image Module Setup ---
 const getImageBuffer = async (url) => {
@@ -42,10 +65,9 @@ const imageOpts = {
     centered: false,
     getImage: async (tagValue, tagName) => {
         if (!tagValue) return null;
-        if (typeof tagValue === 'string') {
+        if (typeof tagValue === 'string' && tagValue.startsWith('http')) {
             return await getImageBuffer(tagValue);
         }
-        // This handles cases where the script might pass an array of attachments
         if (Array.isArray(tagValue) && tagValue.length > 0 && tagValue[0].url) {
             return await getImageBuffer(tagValue[0].url);
         }
@@ -54,8 +76,7 @@ const imageOpts = {
     getSize: () => [250, 250],
 };
 
-
-// Main API endpoint for report generation
+// --- Main API Endpoint ---
 app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
     const uniqueId = uuidv4();
     const outputDocxPath = path.join(reportsDir, `${uniqueId}.docx`);
@@ -67,10 +88,9 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
 
         const templatePath = path.resolve(__dirname, '..', 'template', 'template.docx');
         if (!fs.existsSync(templatePath)) {
-            console.error('Template file not found at:', templatePath);
             return res.status(500).json({ message: 'Template file not found.' });
         }
-        const content = fs.readFileSync(templatePath, 'binary');
+        const content = fs.readFileSync(templatePath);
 
         const imageModule = new ImageModule(imageOpts);
         const zip = new PizZip(content);
@@ -78,6 +98,11 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
             paragraphLoop: true,
             linebreaks: true,
             modules: [imageModule],
+            parser: plumsailParser,
+            delimiters: {
+                start: '{{',
+                end: '}}'
+            }
         });
 
         doc.render(payload);
@@ -90,22 +115,22 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
         fs.writeFileSync(outputDocxPath, buf);
         console.log(`Generated DOCX file: ${outputDocxPath}`);
 
-        console.log('Starting PDF conversion with LibreOffice...');
-        const docxBuf = fs.readFileSync(outputDocxPath);
-        const pdfBuf = await libre.convertAsync(docxBuf, '.pdf', undefined);
-        fs.writeFileSync(outputPdfPath, pdfBuf);
+        console.log('Starting PDF conversion with Puppeteer...');
+        const { value: html } = await mammoth.convertToHtml({ buffer: buf });
+
+        const browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+        const page = await browser.newPage();
+        await page.setContent(html, { waitUntil: 'networkidle0' });
+        await page.pdf({ path: outputPdfPath, format: 'A4', printBackground: true });
+        await browser.close();
         console.log(`Generated PDF file: ${outputPdfPath}`);
 
-        // Use the configurable hostname for the public link
         const publicLink = `http://${hostname}:${port}/reports/${uniqueId}.pdf`;
-        res.status(200).json({
-            link: publicLink
-        });
+        res.status(200).json({ link: publicLink });
 
     } catch (error) {
         console.error('Error generating document:', error);
         if (error.properties && error.properties.errors) {
-            console.error('Docxtemplater errors:', error.properties.errors);
             return res.status(500).json({
                 message: 'Failed to generate document due to template errors.',
                 errors: error.properties.errors.map(e => ({ id: e.properties.id, context: e.properties.context, message: e.message }))
@@ -113,21 +138,12 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
         }
         res.status(500).json({ message: 'An internal server error occurred.', error: error.message });
     } finally {
-        // Clean up temporary files
-        if (fs.existsSync(outputDocxPath)) {
-            fs.unlinkSync(outputDocxPath);
-            console.log(`Cleaned up temporary file: ${outputDocxPath}`);
-        }
-        if (fs.existsSync(outputPdfPath)) {
-            // In a real scenario, you might delay this to ensure Airtable has time to download it.
-            // For this service, we assume Airtable downloads it synchronously.
-            fs.unlinkSync(outputPdfPath);
-            console.log(`Cleaned up generated PDF: ${outputPdfPath}`);
-        }
+        if (fs.existsSync(outputDocxPath)) fs.unlinkSync(outputDocxPath);
+        if (fs.existsSync(outputPdfPath)) fs.unlinkSync(outputPdfPath);
+        console.log('Cleaned up temporary files.');
     }
 });
 
-// Static file server to serve generated reports
 app.use('/reports', express.static(reportsDir));
 
 app.listen(port, () => {

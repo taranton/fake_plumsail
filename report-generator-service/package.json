@@ -16,7 +16,8 @@
     "docxtemplater": "^3.65.2",
     "docxtemplater-image-module-free": "^1.1.1",
     "express": "^5.1.0",
-    "libreoffice-convert": "^1.5.1",
+    "mammoth": "^1.7.2",
+    "puppeteer": "^22.10.0",
     "pizzip": "^3.2.0",
     "uuid": "^11.1.0"
   }
