@@ -21,41 +21,6 @@ if (!fs.existsSync(reportsDir)) {
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
-// --- Custom Parser for Plumsail Syntax ---
-const plumsailParser = {
-    parse(tag) {
-        // This parser handles syntax like {{tag:format(..)}} or {%tag:picture(...)}
-        // by stripping it down to just the tag name.
-        // It's designed to make Plumsail templates compatible with docxtemplater.
-        let strippedTag = tag;
-
-        // Handle image tags like {%my_image}
-        if (tag.startsWith('%')) {
-            strippedTag = tag.substring(1);
-            const colonIndex = strippedTag.indexOf(':');
-            if (colonIndex !== -1) {
-                strippedTag = strippedTag.substring(0, colonIndex);
-            }
-            return {
-                type: "placeholder",
-                module: "image",
-                value: strippedTag,
-            };
-        }
-
-        const colonIndex = tag.indexOf(':');
-        if (colonIndex !== -1) {
-            strippedTag = tag.substring(0, colonIndex);
-        }
-
-        return {
-            type: "placeholder",
-            value: strippedTag,
-        };
-    }
-};
-
-
 // --- Image Module Setup ---
 const getImageBuffer = async (url) => {
     try {
@@ -71,12 +36,9 @@ const imageOpts = {
     centered: false,
     getImage: async (tagValue, tagName) => {
         if (!tagValue) return null;
-        // The tagValue is what the parser's `value` resolves to from the scope.
-        // E.g., for {%Image}, tagValue would be payload.Image
         if (typeof tagValue === 'string' && tagValue.startsWith('http')) {
             return await getImageBuffer(tagValue);
         }
-        // Airtable attachments are often objects or arrays of objects.
         if (Array.isArray(tagValue) && tagValue.length > 0 && tagValue[0].url) {
             return await getImageBuffer(tagValue[0].url);
         }
@@ -103,14 +65,43 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
             return res.status(500).json({ message: 'Template file not found.' });
         }
         const content = fs.readFileSync(templatePath);
+        const zip = new PizZip(content);
+
+        // Pre-process the template XML to remove Plumsail formatters
+        const tagRegex = /\{\{([^{}]+?)\}\}/g;
+        const imageTagRegex = /\{%([^{}]+?)%}/g;
+
+        for (const [fileName, file] of Object.entries(zip.files)) {
+            if (fileName.endsWith('.xml')) {
+                let text = file.asText();
+
+                text = text.replace(tagRegex, (match, tagContent) => {
+                    const colonIndex = tagContent.indexOf(':');
+                    if (colonIndex !== -1) {
+                        const newTag = tagContent.substring(0, colonIndex).trim();
+                        return `{{${newTag}}}`;
+                    }
+                    return match;
+                });
+
+                text = text.replace(imageTagRegex, (match, tagContent) => {
+                    const colonIndex = tagContent.indexOf(':');
+                     if (colonIndex !== -1) {
+                        const newTag = tagContent.substring(0, colonIndex).trim();
+                        return `{%${newTag}}`;
+                    }
+                    return match;
+                });
+
+                zip.file(fileName, text);
+            }
+        }
 
         const imageModule = new ImageModule(imageOpts);
-        const zip = new PizZip(content);
         const doc = new Docxtemplater(zip, {
             paragraphLoop: true,
             linebreaks: true,
             modules: [imageModule],
-            parser: plumsailParser,
         });
 
         doc.render(payload);
@@ -144,7 +135,7 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
                 errors: error.properties.errors.map(e => ({ id: e.properties.id, context: e.properties.context, message: e.message }))
             });
         }
-        res.status(500).json({ message: 'An internal server error occurred.', error: error.message });
+        res.status(500).json({ message: 'An internal server error occurred.', error: { message: error.message, stack: error.stack } });
     } finally {
         if (fs.existsSync(outputDocxPath)) fs.unlinkSync(outputDocxPath);
         if (fs.existsSync(outputPdfPath)) fs.unlinkSync(outputPdfPath);
