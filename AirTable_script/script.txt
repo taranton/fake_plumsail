@@ -1,0 +1,409 @@
+const config = input.config();
+const rootTable = base.getTable('Daily Reports');
+// const processStartUrl = 'https://eu-api.plumsail.com/api/v2/processes/fmlxrneq/hxuvqhn/start';
+const processStartUrl = 'http://130.0.238.133:3000/api/v2/processes/fmlxrneq/hxuvqhn/start';
+const recordId = config.RecordId;
+
+// Функция для группировки фотографий парами
+function groupPhotosInPairs(photos) {
+  if (!photos || photos.length === 0) return [];
+  
+  const grouped = [];
+  for (let i = 0; i < photos.length; i += 2) {
+    const pair = {
+      photo1: photos[i] || null,
+      photo2: photos[i + 1] || null
+    };
+    grouped.push(pair);
+  }
+  return grouped;
+}
+
+const payloadSchema = [
+  {
+    "tag": "Project",
+    "fieldId": "fldWmrV9MnwpF70Vu",
+    "fieldType": "multipleRecordLinks",
+    "isSingleRecord": true,
+    "children": [
+      {
+        "tag": "ProjectName",
+        "fieldId": "fld0GvFaCrV8SU0CI",
+        "fieldType": "singleLineText"
+      },
+      {
+        "tag": "RelatedEquipment",
+        "fieldId": "fldz0zEeuOWF2gT6H",
+        "fieldType": "multipleRecordLinks",
+        "isSingleRecord": false,
+        "children": [
+          {
+            "tag": "EquipmentID",
+            "fieldId": "fldUdrpFv1zNERkRC",
+            "fieldType": "singleLineText"
+          },
+          {
+            "tag": "GasTurbineModel",
+            "fieldId": "fldDQF5lEeIFpRlzh",
+            "fieldType": "singleLineText"
+          },
+          {
+            "tag": "PhotosGasTurbineModel",
+            "fieldId": "fldPeQVzxbGbgFxMj",
+            "fieldType": "multipleAttachments"
+          },
+          {
+            "tag": "ESN",
+            "fieldId": "fldcZdxJzIhi6gazD",
+            "fieldType": "singleLineText"
+          },
+          {
+            "tag": "LastEngineRunning",
+            "fieldId": "fldIFFkzLivC9OrbG",
+            "fieldType": "date"
+          },
+          {
+            "tag": "GeneratorModel",
+            "fieldId": "fldCbJjI3ESH72Ehr",
+            "fieldType": "singleLineText"
+          },
+          {
+            "tag": "SN",
+            "fieldId": "fld7ZLfdUz3L80Wd6",
+            "fieldType": "singleLineText"
+          },
+          {
+            "tag": "PhotosGenerator",
+            "fieldId": "fldhICm7BnZbY6jhJ",
+            "fieldType": "multipleAttachments"
+          }
+        ]
+      },
+      {
+        "tag": "Number",
+        "fieldId": "fld5zPAWRm3B2yE0n",
+        "fieldType": "number"
+      },
+      {
+        "tag": "Customer",
+        "fieldId": "fldKG3ZKLZdZv3qCj",
+        "fieldType": "singleLineText"
+      },
+      {
+        "tag": "IssuedBy",
+        "fieldId": "fld4MtS5SaxvdNEod",
+        "fieldType": "singleLineText"
+      }
+    ]
+  },
+  {
+    "tag": "Reporter",
+    "fieldId": "fld6EtR1Zl9AH7TUk",
+    "fieldType": "multipleRecordLinks",
+    "isSingleRecord": true,
+    "children": [
+      {
+        "tag": "Name",
+        "fieldId": "fldP0XDAXOYoRONSp",
+        "fieldType": "singleLineText"
+      },
+      {
+        "tag": "Role",
+        "fieldId": "fldWG4Ip9An5IXh32",
+        "fieldType": "singleSelect"
+      },
+      {
+        "tag": "Skill",
+        "fieldId": "fldi5hUXsokao2IH4",
+        "fieldType": "singleLineText"
+      },
+      {
+        "tag": "WorkPeriodFrom",
+        "fieldId": "fldMBz765nZyOLdQJ",
+        "fieldType": "date"
+      },
+      {
+        "tag": "Photo",
+        "fieldId": "fldaNSJxfRLLFjEfT",
+        "fieldType": "multipleAttachments"
+      }
+    ]
+  },
+  {
+    "tag": "Date",
+    "fieldId": "fldVy9ZRNyLGiCrSd",
+    "fieldType": "date"
+  },
+  {
+    "tag": "SafetyIncident",
+    "fieldId": "fldEkb2XUNCoA18ml",
+    "fieldType": "singleSelect"
+  },
+  {
+    "tag": "OtherIssues",
+    "fieldId": "fldAI8SZVAoMgV3RT",
+    "fieldType": "multilineText"
+  },
+  {
+    "tag": "TotalMWProduction",
+    "fieldId": "fldmtf5UYALExKmmr",
+    "fieldType": "number"
+  },
+  {
+    "tag": "TotalRunningHours",
+    "fieldId": "fldF8U3OcnffJ2FpB",
+    "fieldType": "number"
+  },
+  {
+    "tag": "SiteActivities",
+    "fieldId": "fldVyZtcMdWg4v5sH",
+    "fieldType": "multilineText"
+  },
+  {
+    "tag": "Details",
+    "fieldId": "fldRIHd0vMYdbZSJp",
+    "fieldType": "multilineText"
+  },
+  {
+    "tag": "EHS",
+    "fieldId": "fldj4yD8jHMQjLkgy",
+    "fieldType": "multilineText"
+  },
+  {
+    "tag": "PLANTPHOTOS",
+    "fieldId": "fldvg2vUtKsB5OkYo",
+    "fieldType": "multipleAttachments"
+  },
+  {
+    "tag": "EquipmentUsed",
+    "fieldId": "fldsTc7R5c6NFijzX",
+    "fieldType": "singleLineText"
+  },
+  {
+    "tag": "EngineRunningMW",
+    "fieldId": "fldcGonrLl4D31YnU",
+    "fieldType": "number"
+  },
+  {
+    "tag": "OBSERVATIONSCONCERNSACTIONS",
+    "fieldId": "fldoduttehnnfAyyP",
+    "fieldType": "multilineText"
+  },
+  {
+    "tag": "MAINTASKSCOMINGUP",
+    "fieldId": "fldv74GPQjtSFKtVu",
+    "fieldType": "multilineText"
+  }
+];
+
+let rootFields = payloadSchema.map(({ fieldId }) => fieldId);
+rootFields.push(rootTable.getField('Report').id); // нужно, чтобы прочитать текущее вложение
+
+const record = await rootTable.selectRecordAsync(recordId, { fields: rootFields });
+const relatedTables = await prefetchRelatedTables(payloadSchema, [record], rootTable);
+const payload = getPayload(record, payloadSchema, rootTable);
+
+// Группируем фотографии парами если они есть
+if (payload.PLANTPHOTOS && Array.isArray(payload.PLANTPHOTOS)) {
+  payload.PLANTPHOTOS_GROUPED = groupPhotosInPairs(payload.PLANTPHOTOS);
+}
+
+const response = await fetch(processStartUrl, {
+  method: 'POST',
+  body: JSON.stringify(payload),
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+const responseJson = await response.json();
+output.set('documentLink', responseJson.link);
+
+if (response.ok && responseJson?.link) {
+  // угадать расширение из ссылки (pdf/docx и т.п.)
+  const guessedExt = (responseJson.link.match(/\.([a-zA-Z0-9]+)(?:\?|$)/)?.[1] || 'pdf');
+  const fileName = `Daily_Report_${recordId}.${guessedExt}`;
+
+  const current = record.getCellValue('Report') || []; // уже прикреплённые файлы
+  await rootTable.updateRecordAsync(recordId, {
+    'Report': [
+      ...current,
+      { url: responseJson.link, filename: fileName }
+    ]
+  });
+} else {
+  throw new Error(`Plumsail did not return a link: ${JSON.stringify(responseJson)}`);
+}
+
+function getPayload(record, schema, table) {
+  if (!record) return {};
+
+  return schema.reduce((accumulator, itemSchema) => {
+
+    if (itemSchema.fieldType === 'multipleRecordLinks') {
+      if (!itemSchema.children || !itemSchema.children.length) {
+        const recordValue = record.getCellValue(itemSchema.fieldId);
+        accumulator[itemSchema.tag] = itemSchema.isSingleRecord
+          ? recordValue[0].name
+          : recordValue
+
+        return accumulator;
+      }
+
+      const currentField = table.getField(itemSchema.fieldId);
+
+      const subtableId = currentField.options.linkedTableId;
+      const subTable = base.getTable(subtableId);
+
+      const linkedRecords = (record.getCellValue(itemSchema.fieldId) || []).map(({id}) => id);
+      const records = relatedTables
+        .find((t) => t.tableId === subtableId)
+        ?.records
+        ?.filter(({ id }) => linkedRecords.includes(id)) || [];
+
+      const values = records.map(
+        (currentRecord) => getPayload(currentRecord, itemSchema.children, subTable)
+      );
+
+      if (itemSchema.isSingleRecord) {
+        accumulator[itemSchema.tag] = {};
+        if (values?.length) {
+          Object.entries(values[0]).forEach(([key, value]) => {
+            accumulator[itemSchema.tag][key] = value;
+          })
+        }
+      } else {
+        accumulator[itemSchema.tag] = values;
+      }
+
+      return accumulator;
+    }
+
+    if (itemSchema.fieldType === 'multipleLookupValues') {
+      const recordValues = record.getCellValue(itemSchema.fieldId);
+      if (Array.isArray(recordValues)) {
+        const values = recordValues.map((value) => {
+          if (typeof value !== "object") return { value };
+          // for barcode
+          if (value && Object.keys(value).length === 1 && value.text) {
+            return { value: value.text }
+          }
+          return { value: value?.value };
+        });
+        accumulator[itemSchema.tag] = values;
+      } else {
+        accumulator[itemSchema.tag] = recordValues;
+      }
+      return accumulator;
+    }
+
+    if (
+         itemSchema.fieldType === 'barcode'
+      || itemSchema.fieldType === 'formula'
+      || itemSchema.fieldType === 'rollup'
+    ) {
+      accumulator[itemSchema.tag] = record.getCellValueAsString(itemSchema.fieldId);
+      return accumulator;
+    }
+
+    if (itemSchema.fieldType === 'aiText') {
+      const cellValue = record.getCellValue(itemSchema.fieldId);
+      accumulator[itemSchema.tag] = cellValue.value;
+      return accumulator;
+    }
+
+    if (itemSchema.fieldType === 'checkbox') {
+      accumulator[itemSchema.tag] = record.getCellValue(itemSchema.fieldId) || false;
+      return accumulator;
+    }
+
+    accumulator[itemSchema.tag] = record.getCellValue(itemSchema.fieldId);
+    return accumulator;
+  }, {});
+}
+
+async function prefetchRelatedTables(shema, records, table) {
+  const linkedRecordIds = getLinkedRecordIds(shema, records, table);
+  if(!linkedRecordIds.length) return [];
+
+  return linkedRecordIds.reduce(async (accumulator, item) => {
+    const acc = await accumulator;
+    const subRecords = await getLinkedRecords(item);
+
+    if(item.schema?.length) {
+      const subTable = base.getTable(item.tableId);
+      const subTables = await prefetchRelatedTables(item.schema, subRecords, subTable);
+
+      subTables.forEach((sTable) => {
+        const existTableIndex = acc.findIndex((t) => t.tableId === sTable.tableId);
+        if (existTableIndex !== -1) {
+          const existRecordIds = acc[existTableIndex].records.map(({ id }) => id);
+          const newSubRecords = sTable.records.filter(({ id }) => !existRecordIds.includes(id));
+          acc[existTableIndex] = {
+            tableId: sTable.tableId,
+            records: acc[existTableIndex].records.concat(newSubRecords)
+          }
+        } else {
+          acc.push(sTable);
+        }
+      })
+    }
+
+    const existTableIndex = acc.findIndex((t) => t.tableId === item.tableId);
+    if (existTableIndex !== -1) {
+      const existRecordIds = acc[existTableIndex].records.map(({ id }) => id);
+      const newSubRecords = subRecords.filter(({ id }) => !existRecordIds.includes(id));
+      acc[existTableIndex] = {
+        tableId: item.tableId,
+        records: acc[existTableIndex].records.concat(newSubRecords)
+      }
+    } else {
+      acc.push({ tableId: item.tableId, records: subRecords });
+    }
+
+
+    return acc;
+  }, Promise.resolve([]));
+}
+
+async function getLinkedRecords({ tableId, recordIds, selectedFields }) {
+  const table = base.getTable(tableId);
+  const recordsQuery = await table.selectRecordsAsync({ fields: selectedFields, recordIds });
+  return recordsQuery.records;
+}
+
+function getLinkedRecordIds(schema, records, table) {
+    return schema.reduce((acc, item) => {
+      if (item.fieldType !== 'multipleRecordLinks' || !item.children) return acc;
+      const selectedFields = item.children.map(({ fieldId }) => fieldId);
+      const currentField = table.getField(item.fieldId);
+      const linkedRecordsIds = [...new Set(
+        (records.map((record) => record.getCellValue(item.fieldId) || []))
+        .flat().map(({id}) => id)
+      )];
+
+      const currentTableId = currentField.options.linkedTableId;
+      const existTableIndex = acc.findIndex((t) => t.tableId === currentTableId);
+      const childrenFields = item.children?.filter(({ fieldType }) => fieldType === 'multipleRecordLinks') || [];
+
+      if (existTableIndex !== -1) {
+        const existTable = acc[existTableIndex];
+        const newRecordIds = [...new Set(existTable.recordIds.concat(linkedRecordsIds))];
+        const newFields = [...new Set(existTable.selectedFields.concat(selectedFields))];
+        const existChildFields = existTable.schema.map(({ fieldId }) => fieldId);
+        const newChildFields = childrenFields.filter(({ fieldId }) => !existChildFields.includes(fieldId));
+
+        acc[existTableIndex] = {
+          tableId: currentTableId,
+          recordIds: newRecordIds,
+          selectedFields: newFields,
+          schema: existTable.schema.concat(newChildFields),
+        }
+      } else {
+        acc.push({ tableId: currentTableId, recordIds: linkedRecordsIds, selectedFields, schema: childrenFields });
+      }
+
+      return acc;
+    }, []);
+}
+
