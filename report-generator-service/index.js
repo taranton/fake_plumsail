@@ -22,33 +22,39 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 // --- Custom Parser for Plumsail Syntax ---
-const plumsailParser = (tag) => {
-    // This parser handles syntax like {{tag:format(..)}}, etc.
-    // by stripping it down to just the tag.
-    // A more robust implementation could actually parse and apply the formatters.
-    if (tag.startsWith('{{') && tag.endsWith('}}')) {
-        let strippedTag = tag.substring(2, tag.length - 2).trim();
-        // Remove formatters like :format(), :picture(), etc.
-        const colonIndex = strippedTag.indexOf(':');
-        if (colonIndex !== -1) {
-            strippedTag = strippedTag.substring(0, colonIndex);
-        }
-        // Handle image tags like {%image}
-        if (strippedTag.startsWith('%')) {
-             return {
-                get: (scope) => scope[strippedTag.substring(1)],
+const plumsailParser = {
+    parse(tag) {
+        // This parser handles syntax like {{tag:format(..)}} or {%tag:picture(...)}
+        // by stripping it down to just the tag name.
+        // It's designed to make Plumsail templates compatible with docxtemplater.
+        let strippedTag = tag;
+
+        // Handle image tags like {%my_image}
+        if (tag.startsWith('%')) {
+            strippedTag = tag.substring(1);
+            const colonIndex = strippedTag.indexOf(':');
+            if (colonIndex !== -1) {
+                strippedTag = strippedTag.substring(0, colonIndex);
+            }
+            return {
                 type: "placeholder",
                 module: "image",
-                value: strippedTag.substring(1),
-            }
+                value: strippedTag,
+            };
         }
+
+        const colonIndex = tag.indexOf(':');
+        if (colonIndex !== -1) {
+            strippedTag = tag.substring(0, colonIndex);
+        }
+
         return {
-            get: (scope) => scope[strippedTag],
+            type: "placeholder",
+            value: strippedTag,
         };
     }
-    // Default behavior for other tags
-    return null;
 };
+
 
 // --- Image Module Setup ---
 const getImageBuffer = async (url) => {
@@ -65,11 +71,17 @@ const imageOpts = {
     centered: false,
     getImage: async (tagValue, tagName) => {
         if (!tagValue) return null;
+        // The tagValue is what the parser's `value` resolves to from the scope.
+        // E.g., for {%Image}, tagValue would be payload.Image
         if (typeof tagValue === 'string' && tagValue.startsWith('http')) {
             return await getImageBuffer(tagValue);
         }
+        // Airtable attachments are often objects or arrays of objects.
         if (Array.isArray(tagValue) && tagValue.length > 0 && tagValue[0].url) {
             return await getImageBuffer(tagValue[0].url);
+        }
+        if (typeof tagValue === 'object' && tagValue.url) {
+            return await getImageBuffer(tagValue.url);
         }
         return tagValue;
     },
@@ -99,10 +111,6 @@ app.post('/api/v2/processes/fmlxrneq/hxuvqhn/start', async (req, res) => {
             linebreaks: true,
             modules: [imageModule],
             parser: plumsailParser,
-            delimiters: {
-                start: '{{',
-                end: '}}'
-            }
         });
 
         doc.render(payload);
